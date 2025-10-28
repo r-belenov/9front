@@ -16,6 +16,7 @@ enum {
 	Qkbmap,
 	Qcons,
 	Qconsctl,
+	Qbuttonmapctl,
 	Nqid,
 
 	Lnone = 0,
@@ -29,6 +30,14 @@ enum {
 	Lmod4,
 	Laltgrmod4,
 	Nlayers,
+
+	Mnone = 0,
+    Malt,
+	Maltgr,
+	Mctl,
+	Mmod4,
+	Mshift,
+	Nmods,
 
 	Rawon=	0,
 	Rawoff,
@@ -88,6 +97,10 @@ struct Qtab {
 		0,
 
 	"consctl",
+		0600,
+		0,
+
+	"buttonmapctl",
 		0600,
 		0,
 };
@@ -282,15 +295,19 @@ Rune ascii[Nlayers][Nscan] = {
 	[Lctl]
 	{
 	[0x00]	0,	'', 	'', 	'', 	'', 	'', 	'', 	'', 
-	[0x08]	'', 	'', 	'', 	'', 	'', 	'', 	'\b',	'\t',
+	[0x08]	'', 	'', 	'', 	'', 	'
+', 	'', 	'\b',	'\t',
 	[0x10]	'', 	'', 	'', 	'', 	'', 	'', 	'', 	'\t',
 	[0x18]	'', 	'', 	'', 	'', 	'\n',	Kctl,	'', 	'', 
 	[0x20]	'', 	'', 	'', 	'\b',	'\n',	'', 	'', 	'', 
 	[0x28]	'', 	0, 	Kshift,	'', 	'', 	'', 	'', 	'', 
-	[0x30]	'', 	'', 	'', 	'', 	'', 	'', 	Kshift,	'\n',
+	[0x30]	'', 	'', 	'
+', 	'', 	'', 	'', 	Kshift,	'\n',
 	[0x38]	Kalt,	0, 	Kctl,	'', 	'', 	'', 	'', 	'', 
-	[0x40]	'', 	'', 	'', 	'', 	'', 	'', 	'', 	'', 
-	[0x48]	'', 	'', 	'', 	'', 	'', 	'', 	'', 	'', 
+	[0x40]	'', 	'', 	'', 	'
+', 	'', 	'', 	'', 	'', 
+	[0x48]	'', 	'', 	'
+', 	'', 	'', 	'', 	'', 	'', 
 	[0x50]	'', 	'', 	'', 	'', 	0,	0,	0,	'', 
 	[0x58]	'', 	0,	0,	0,	0,	0,	0,	0,
 	[0x60]	0,	0,	0,	0,	0,	0,	0,	0,
@@ -361,6 +378,31 @@ Rune ascii[Nlayers][Nscan] = {
 };
 
 Rune kbtabs[Nlayers][Nscan];
+
+struct Mtab {
+	char* name;
+	int key;
+	char buttonmap[3];
+} mtab[Nmods] = {
+	"none",
+		0,
+		"123",
+	"alt",
+		Kalt,
+		"123",
+	"altgr",
+		Kaltgr,
+		"123",
+	"ctl",
+		Kctl,
+		"123",
+	"mod4",
+		Kmod4,
+		"123",
+	"shift",
+		Kshift,
+		"132",
+};
 
 char*
 dev(char *file)
@@ -896,6 +938,7 @@ mctlproc(void *)
 {
 	Key key;
 	int i, mouseb = 0;
+	char buttonmap[] = "buttonmap 123";
 
 	threadsetname("mctlproc");
 
@@ -907,12 +950,13 @@ mctlproc(void *)
 				break;
 		}
 
-		if(mctlfd >= 0 && key.r == Kshift){
-			if(key.down){
-				fprint(mctlfd, "buttonmap 132");
-			} else {
-				fprint(mctlfd, "swap");
-				fprint(mctlfd, "swap");
+		if(mctlfd >= 0){
+			for(i = 0; i < Nmods; i++){
+				if(key.r == mtab[i].key){
+					memcpy(buttonmap + 10, mtab[key.down ? i : Mnone].buttonmap, 3);
+					fprint(mctlfd, buttonmap);
+					break;
+				}
 			}
 			continue;
 		}
@@ -1444,6 +1488,11 @@ static void
 fsread(Req *r)
 {
 	Fid *f;
+	char *buf;
+	char *ptr;
+	int bufsz;
+	int len;
+	int i;
 
 	f = r->fid;
 	switch((ulong)f->qid.path){
@@ -1463,6 +1512,23 @@ fsread(Req *r)
 	case Qkbmap:
 		kbmapread(r);
 		return;
+	case Qbuttonmapctl:
+		bufsz = 1; /* for terminating 0 */
+		for(i = 0; i < Nmods; i++){
+			bufsz += strlen(mtab[i].name) + 5 /* " 123\n" */;
+		}
+		ptr = buf = malloc(bufsz);
+		for(i = 0; i < Nmods; i++){
+			len = strlen(mtab[i].name);
+			memcpy(ptr, mtab[i].name, len);
+			ptr += len; *ptr = ' '; ptr++;
+			memcpy(ptr, mtab[i].buttonmap, 3);
+			ptr +=3; *ptr = '\n'; ptr++;
+		}
+		*ptr = 0;
+		readstr(r, buf);
+		free(buf);
+		break;
 	}
 	respond(r, nil);
 }
@@ -1473,6 +1539,7 @@ fswrite(Req *r)
 	Fid *f;
 	char *p;
 	int n, i;
+	Cmdbuf *cb;
 
 	f = r->fid;
 	p = r->ifcall.data;
@@ -1499,6 +1566,26 @@ fswrite(Req *r)
 			return;
 		}
 		break;
+
+	case Qbuttonmapctl:
+		cb = parsecmd(p, n);
+		if(cb->nf < 2 || strlen(cb->f[1]) < 3){
+			respond(r, Ebadarg);
+			free(cb);
+			return;
+		}
+		for(i = 0; i < Nmods; i++){
+			if(strcmp(cb->f[0], mtab[i].name) == 0){
+				memcpy(mtab[i].buttonmap, cb->f[1], 3);
+				r->ofcall.count = n;
+				respond(r, nil);
+				free(cb);
+				return;
+			}
+		}
+		respond(r, Ebadarg);
+		free(cb);
+		return;
 
 	case Qkbdin:
 	case Qkbin:
