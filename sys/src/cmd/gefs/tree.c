@@ -1272,8 +1272,11 @@ btupsert(Tree *t, Msg *msg, int nmsg)
 		error(Erdonly);
 	sz = 0;
 	stablesort(msg, nmsg);
-	for(i = 0; i < nmsg; i++)
+	for(i = 0; i < nmsg; i++){
+		assert(msg[i].nk <= Keymax);
+		assert(msg[i].nv <= Inlmax);
 		sz += msgsz(&msg[i]);
+	}
 	npull = 0;
 Again:
 	b = getroot(t, &height);

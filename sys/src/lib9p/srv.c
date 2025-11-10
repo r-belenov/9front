@@ -23,6 +23,7 @@ static char Eperm[] = "permission denied";
 static char Eunknownfid[] = "unknown fid";
 static char Ebaddir[] = "bad directory in wstat";
 static char Ewalknodir[] = "walk in non-directory";
+static char Emsize[] = "message size too small";
 
 static void
 setfcallerror(Fcall *f, char *err)
@@ -175,7 +176,7 @@ sversion(Srv *srv, Req *r)
 	}
 	r->ofcall.version = "9P2000";
 	if(r->ifcall.msize < 256){
-		respond(r, "version: message size too small");
+		respond(r, Emsize);
 		return;
 	}
 	if(r->ifcall.msize < 1024*1024)
@@ -660,28 +661,25 @@ sstat(Srv *srv, Req *r)
 	else
 		respond(r, Enostat);
 }
+
 static void
 rstat(Req *r, char *error)
 {
 	int n;
 	uchar *statbuf;
-	uchar tmp[BIT16SZ];
 
 	if(error)
 		return;
-	if(convD2M(&r->d, tmp, BIT16SZ) != BIT16SZ){
-		r->error = "convD2M(_,_,BIT16SZ) did not return BIT16SZ";
-		return;
-	}
-	n = GBIT16(tmp)+BIT16SZ;
+	n = sizeD2M(&r->d);
 	statbuf = emalloc9p(n);
-	r->ofcall.nstat = convD2M(&r->d, statbuf, n);
-	r->ofcall.stat = statbuf;	/* freed in closereq */
-	if(r->ofcall.nstat <= BIT16SZ){
-		r->error = "convD2M fails";
+	n = convD2M(&r->d, statbuf, n);
+	if(n <= BIT16SZ || n > r->srv->msize-(BIT32SZ+BIT8SZ+BIT16SZ+BIT16SZ)){
+		r->error = Emsize;
 		free(statbuf);
 		return;
 	}
+	r->ofcall.nstat = n;
+	r->ofcall.stat = statbuf;	/* freed in closereq */
 }
 
 static void
