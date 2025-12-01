@@ -884,11 +884,9 @@ Again:
 	for(i = 0; i < agetl(&fs->nworker); i++){
 		e = agetl(&fs->lepoch[i]);
 		if((e & Eactive) && e != (ge | Eactive)){
-			if(delay < 1000)
-				delay++;
-			else
+			if(delay == 300)
 				fprint(2, "stalled epoch %lx [worker %d]\n", e, i);
-			sleep(delay);
+			sleep(delay++);
 			goto Again;
 		}
 	}

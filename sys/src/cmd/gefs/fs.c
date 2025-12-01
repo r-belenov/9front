@@ -207,6 +207,7 @@ sync(int id)
 	 */
 	tracem("snapdl");
 	wrwait();
+	epochwait();
 	freedl(&dl, 1);
 	qunlock(&fs->synclk);
 	tracem("synced");
@@ -2786,6 +2787,7 @@ setconf(int fd, int op, char *snap, char *key, char *val)
 	m.nv = strlen(val);
 	qlock(&fs->mutlk);
 	if(!waserror()){
+		fprint(fd, "set %q: %q", key, val);
 		btupsert(t, &m, 1);
 		poperror();
 	}else
@@ -3093,7 +3095,9 @@ runtasks(int tid, void *)
 		sleep(5000);
 		if(agetl(&fs->rdonly))
 			continue;
+		epochstart(tid);
 		if(waserror()){
+			epochend(tid);
 			fprint(2, "task error: %s\n", errmsg());
 			continue;
 		}
@@ -3105,7 +3109,6 @@ runtasks(int tid, void *)
 		tmnow(&tm, nil);
 		now = tmnorm(&tm);
 
-		epochstart(tid);
 		for(mnt = agetp(&fs->mounts); mnt != nil; mnt = mnt->next){
 			if(!(mnt->flag & Lmut))
 				continue;

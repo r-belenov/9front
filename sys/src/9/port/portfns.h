@@ -107,7 +107,7 @@ int		eqchantdqid(Chan*, int, int, Qid, int);
 int		eqqid(Qid, Qid);
 _Noreturn void	error(char*);
 void		eqlock(QLock*);
-uintptr		execregs(uintptr, ulong, ulong);
+uintptr		execregs(uintptr, int, char**, Tos*);
 void		exhausted(char*);
 void		exit(int);
 uvlong		fastticks(uvlong*);
@@ -245,6 +245,8 @@ void		pathclose(Path*);
 ulong		perfticks(void);
 _Noreturn void	pexit(char*, int);
 void		pgrpcpy(Pgrp*, Pgrp*);
+void		pgrpinsert(Pgrp*, Mount *);
+void		pgrpremove(Pgrp*, Mount *);
 ulong		pidalloc(Proc*);
 #define		waserror()		setlabel(&up->errlab[up->nerrlab++])
 #define		poperror()		up->nerrlab--
