@@ -466,12 +466,14 @@ Readerr:
 
 static
 int
-huffmantable(Header *h, uchar *b)
+huffmantable(Header *h, uchar *b, int nb)
 {
 	Huffman *t;
 	int Tc, th, n, nsize, i, j, k, v, cnt, code, si, sr;
 	int *maxcode;
 
+	if(nb < 17)
+		jpgerror(h, "ReadJPG: invalid huffman table: nb(%d) < 17", nb);
 	nibbles(b[0], &Tc, &th);
 	if(Tc > 1)
 		jpgerror(h, "ReadJPG: unknown Huffman table class %d", Tc);
@@ -488,6 +490,8 @@ huffmantable(Header *h, uchar *b)
 		nsize += b[i];
 	if(nsize == 0)
 		return 0;
+	if(nb < 17+nsize)
+		jpgerror(h, "ReadJPG: invalid huffman table, %d < %d", nb, 17+nsize);
 	t->size = jpgmalloc(h, (nsize+1)*sizeof(int), 1);
 	k = 0;
 	for(i=1; i<=16; i++){
@@ -579,7 +583,7 @@ huffmantables(Header *h, uchar *b, int n)
 	int l, mt;
 
 	for(l=0; l<n; l+=17+mt)
-		mt = huffmantable(h, &b[l]);
+		mt = huffmantable(h, &b[l], n-l);
 }
 
 static
@@ -965,6 +969,8 @@ progressivedc(Header *h, int comp, int Ah, int Al)
 		for(mcu=0; mcu<nmcu; ){
 			for(i=0; i<Ns; i++){
 				comp = scancomp[i];
+				if(comp < 0 || comp >= nelem(h->comp))
+					jpgerror(h, "ReadJPG: scan component out of range");
 				dcht = &h->dcht[Td[i]];
 				qt = h->qt[h->comp[comp].Tq][0];
 				dc = h->dccoeff[comp];
@@ -1273,8 +1279,8 @@ colormap1(Header *h, int colorspace, Rawimage *image, int data[8*8], int mcu, in
 	k = 0;
 	for(y=0; y<dy; y++){
 		for(x=0; x<dx; x++){
-			r = CLAMP(data[k+x] + 128);
-			pic[pici+x] = r;
+			r = data[k+x] + 128;
+			pic[pici+x] = CLAMP(r);
 		}
 		pici += h->X;
 		k += 8;
@@ -1315,21 +1321,24 @@ colormapall1(Header *h, int colorspace, Rawimage *image,
 		bp = bpic+pici;
 		if(colorspace == CYCbCr)
 			for(x=0; x<dx; x++){
-				*rp++ = CLAMP(*p0++ + 128);
-				*gp++ = CLAMP(*p1++ + 128);
-				*bp++ = CLAMP(*p2++ + 128);
+				r = *p0++ + 128;
+				g = *p1++ + 128;
+				b = *p2++ + 128;
+				*rp++ = CLAMP(r);
+				*gp++ = CLAMP(g);
+				*bp++ = CLAMP(b);
 			}
 		else
 			for(x=0; x<dx; x++){
 				Y = (*p0++ + 128) << 11;
 				Cb = *p1++;
 				Cr = *p2++;
-				r = Y+c1*Cr;
-				g = Y-c2*Cb-c3*Cr;
-				b = Y+c4*Cb;
-				*rp++ = CLAMP(r >> 11);
-				*gp++ = CLAMP(g >> 11);
-				*bp++ = CLAMP(b >> 11);
+				r = (Y+c1*Cr) >> 11;
+				g = (Y-c2*Cb-c3*Cr) >> 11;
+				b = (Y+c4*Cb) >> 11;
+				*rp++ = CLAMP(r);
+				*gp++ = CLAMP(g);
+				*bp++ = CLAMP(b);
 			}
 		pici += h->X;
 		k += 8;
@@ -1379,20 +1388,20 @@ colormap(Header *h, int colorspace, Rawimage *image,
 		x2 = 0;
 		for(x=0; x<dx; x++){
 			if(colorspace == CYCbCr){
-				rpic[pici+x] = CLAMP(data0[b0][y0+x0++*H0/Hmax] + 128);
-				gpic[pici+x] = CLAMP(data1[b1][y1+x1++*H1/Hmax] + 128);
-				bpic[pici+x] = CLAMP(data2[b2][y2+x2++*H2/Hmax] + 128);
+				r = data0[b0][y0+x0++*H0/Hmax] + 128;
+				g = data1[b1][y1+x1++*H1/Hmax] + 128;
+				b = data2[b2][y2+x2++*H2/Hmax] + 128;
 			}else{
 				Y = (data0[b0][y0+x0++*H0/Hmax]+128)<<11;
 				Cb = data1[b1][y1+x1++*H1/Hmax];
 				Cr = data2[b2][y2+x2++*H2/Hmax];
-				r = Y+c1*Cr;
-				g = Y-c2*Cb-c3*Cr;
-				b = Y+c4*Cb;
-				rpic[pici+x] = CLAMP(r >> 11);
-				gpic[pici+x] = CLAMP(g >> 11);
-				bpic[pici+x] = CLAMP(b >> 11);
+				r = (Y+c1*Cr) >> 11;
+				g = (Y-c2*Cb-c3*Cr) >> 11;
+				b = (Y+c4*Cb) >> 11;
 			}
+			rpic[pici+x] = CLAMP(r);
+			gpic[pici+x] = CLAMP(g);
+			bpic[pici+x] = CLAMP(b);
 			if(x0*H0/Hmax >= 8){
 				x0 = 0;
 				b0++;
