@@ -21,6 +21,10 @@ u8int yma1, yma2;
 u8int z80bus = RESET;
 u16int z80bank;
 
+int ssfmapper;
+/* virtual → physical 512K page */
+u16int ssfpage[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+
 //#define vramdebug(a, s, a1, a2, a3) if((a & ~1) == 0xe7a0) print(s, a1, a2, a3);
 #define vramdebug(a, s, a1, a2, a3)
 
@@ -33,8 +37,10 @@ regread(u16int a)
 	case 0x0001: return 0xa0;
 	case 0x0003:
 		v = ~(keys & 0xffff);
-		if((ctl[0] & 0x40) == 0)
+		if((ctl[0] & 0x40) == 0){
 			v >>= 8;
+			v &= ~(0b1100);
+		}
 		return ctl[0] & 0xc0 | v & 0x3f;
 	case 0x0005:
 	case 0x0007:
@@ -50,6 +56,8 @@ regread(u16int a)
 void
 regwrite(u16int a, u16int v)
 {
+	int p;
+
 	switch(a | 1){
 	case 0x0003: case 0x0005: case 0x0007:
 	case 0x0009: case 0x000b: case 0x000d:
@@ -71,7 +79,11 @@ regwrite(u16int a, u16int v)
 		else
 			sramctl &= ~SRAMEN;
 		return;
-	case 0x30f3: case 0x30f5: case 0x30f7: case 0x30f9: case 0x30fb:
+	case 0x30f3: case 0x30f5: case 0x30f7: case 0x30f9: case 0x30fb: case 0x30fd: case 0x30ff:
+		ssfmapper = 1;
+		p = ((a|1) - 0x30f1) / 2;
+		assert(p < 8);
+		ssfpage[p] = v;
 		return;
 	}
 	fprint(2, "write to 0xa1%.4x (pc=%#.6ux)", a, curpc);
@@ -117,17 +129,29 @@ cramwrite(u16int a, u16int v)
 u16int
 memread(u32int a)
 {
-	u16int v;
+	u16int v, p;
+	u32int a2;
 
 	switch(a >> 21 & 7){
 	case 0: case 1:
-		if((sramctl & SRAMEN) != 0 && a >= sram0 && a <= sram1)
-			switch(sramctl & ADDRMASK){
-			case ADDREVEN: return sram[(a - sram0) >> 1] << 8;
-			case ADDRODD: return sram[(a - sram0) >> 1];
-			case ADDRBOTH: return sram[a - sram0] << 8 | sram[a - sram0 + 1];
-			}
-		return prg[(a % nprg) / 2];
+		if(a < sram0 || a > sram1)
+			goto rom;
+		if((sramctl & SRAMEN) == 0 && prgend > 2*1024*1024)
+			goto rom;
+		switch(sramctl & ADDRMASK){
+		case ADDREVEN: return sram[(a - sram0) >> 1] << 8;
+		case ADDRODD: return sram[(a - sram0) >> 1];
+		case ADDRBOTH: return sram[a - sram0] << 8 | sram[a - sram0 + 1];
+		}
+	rom:
+		if(ssfmapper){
+			a2 = a % prgend;
+			p = a2 / (512*1024);
+			a2 = a2 % (512*1024);
+			a2 += ssfpage[p] * 512*1024;
+			return prg[a2 / 2];
+		} else
+			return prg[(a % prgend) / 2];
 	case 5:
 		switch(a >> 16 & 0xff){
 		case 0xa0:
@@ -203,22 +227,23 @@ memwrite(u32int a, u16int v, u16int m)
 		print("%x %x %x\n", curpc, v, m);
 	switch((a >> 21) & 7){
 	case 0: case 1:
-		if((sramctl & SRAMEN) != 0 && a >= sram0 && a <= sram1){
-			switch(sramctl & ADDRMASK){
-			case ADDREVEN: sram[(a - sram0) >> 1] = v >> 8; break;
-			case ADDRODD: sram[(a - sram0) >> 1] = v; break;
-			case ADDRBOTH:
-				if((m & 0xff00) == 0xff00)
-					sram[a - sram0] = v >> 8;
-				if((m & 0xff) == 0xff)
-					sram[a + 1 - sram0] = v;
-				break;
-			}
-			if(saveclock == 0)
-				saveclock = SAVEFREQ;
-			return;
+		if(a < sram0 || a > sram1)
+			goto invalid;
+		if((sramctl & SRAMEN) == 0 && prgend > 2*1024*1024)
+			goto invalid;
+		switch(sramctl & ADDRMASK){
+		case ADDREVEN: sram[(a - sram0) >> 1] = v >> 8; break;
+		case ADDRODD: sram[(a - sram0) >> 1] = v; break;
+		case ADDRBOTH:
+			if((m & 0xff00) == 0xff00)
+				sram[a - sram0] = v >> 8;
+			if((m & 0xff) == 0xff)
+				sram[a + 1 - sram0] = v;
+			break;
 		}
-		goto invalid;
+		if(saveclock == 0)
+			saveclock = SAVEFREQ;
+		return;
 	case 5:
 		switch(a >> 16 & 0xff){
 		case 0xa0:
