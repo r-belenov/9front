@@ -336,32 +336,20 @@ chrecv(Chan *c)
 	return a;
 }
 
-int
-chsendnb(Chan *c, void *m, int block)
+void
+chsend(Chan *c, void *m)
 {
 	long v;
-	int r;
 
 	v = agetl(&c->avail);
-	if(v == 0 || !acasl(&c->avail, v, v-1)){
-		while((r = semacquire(&c->avail.v, block)) == -1)
-			continue;
-		if(r == 0)
-			return 0;
-	}
+	if(v == 0 || !acasl(&c->avail, v, v-1))
+		semacquire(&c->avail.v, 1);
 	lock(&c->wl);
 	*c->wp = m;
 	if(++c->wp >= &c->args[c->size])
 		c->wp = c->args;
 	unlock(&c->wl);
 	semrelease(&c->count.v, 1);
-	return 1;
-}
-
-void
-chsend(Chan *c, void *m)
-{
-	chsendnb(c, m, 1);
 }
 
 static void
@@ -623,15 +611,14 @@ loadhist(Mount *mnt, Cron *c)
 			continue;
 		memcpy(buf, s.kv.k+1, s.kv.nk-1);
 		buf[s.kv.nk-1] = 0;
-
-		if(c->cnt == 0)
+		if(c->cnt == 0){
 			snapmsg(buf, nil);
-		else if(c->lbl[i][0] != 0){
-			assert(sizeof(buf) == sizeof(c->lbl[i]));
-			snapmsg(c->lbl[i], nil);
-			memcpy(c->lbl[i], buf, sizeof(buf));
-			i = (i+1) % c->cnt;
+			continue;
 		}
+		if(c->lbl[i][0] != 0 && c->cnt > 0)
+			snapmsg(c->lbl[i], nil);
+		memcpy(c->lbl[i], buf, sizeof(buf));
+		i = (c->cnt > 0) ? (i+1) % c->cnt : 0;
 	}
 	btexit(&s);
 	if(tz == nil)
@@ -649,7 +636,7 @@ static void
 loadautos(Mount *mnt)
 {
 	char *p, pfx[32], rbuf[Kvmax+1];
-	int i, n, div, cnt, op;
+	int i, n, c, div, cnt, op;
 	Kvp kv, r;
 
 	pfx[0] = Kconf;
@@ -670,7 +657,7 @@ loadautos(Mount *mnt)
 	};
 	memcpy(mnt->cron, crons, sizeof crons);
 	while(*p){
-		cnt = 0;
+		cnt = -1;
 		div = 1;
 		op = -1;
 
@@ -685,7 +672,7 @@ loadautos(Mount *mnt)
 			op = *p++;
 		while(*p == ' ' || *p == '\t')
 			p++;
-		if(cnt < 0 || div <= 0){
+		if(div <= 0){
 Bad:			memset(mnt->cron, 0, sizeof(mnt->cron));
 			fprint(2, "invalid time spec\n");
 			return;
@@ -697,9 +684,10 @@ Bad:			memset(mnt->cron, 0, sizeof(mnt->cron));
 		if(i == nelem(crons))
 			goto Bad;
 
-		mnt->cron[i].div *= div;
+		c = (cnt <= 0) ? 1 : cnt;
 		mnt->cron[i].cnt = cnt;
-		mnt->cron[i].lbl = emalloc(cnt*sizeof(char[128]), 1);
+		mnt->cron[i].div = div*crons[i].div;
+		mnt->cron[i].lbl = emalloc(c*128, 1);
 	}
 	for(i = 0; i < nelem(mnt->cron); i++)
 		loadhist(mnt, &mnt->cron[i]);
@@ -1114,6 +1102,8 @@ fsauth(Fmsg *m)
 		free(de);
 		return;
 	}
+	if(fs->nextqid >= Qdump)
+		error(Enoqid);
 	aswapl(&de->ref, 0);
 	de->qid.type = QTAUTH;
 	qlock(&fs->mutlk);
@@ -1590,14 +1580,8 @@ fswstat(Fmsg *m, int id, Amsg **ao)
 	nulldir = 1;
 	op = 0;
 
-	/* check validity of updated fields and construct Owstat message */
-	if(d.qid.path != ~0 || d.qid.vers != ~0){
-		nulldir = 0;
-		if(d.qid.path != de->qid.path)
-			error(Ewstatp);
-		if(d.qid.vers != de->qid.vers)
-			error(Ewstatv);
-	}
+	if(d.qid.path != ~0 || d.qid.vers != ~0 || d.qid.type != 0xff || d.type != 0xffff || d.dev != ~0)
+		error(Ewstatq);
 	if(*d.name != '\0'){
 		nulldir = 0;
 		if(strlen(d.name) > Maxname)
@@ -1613,7 +1597,7 @@ fswstat(Fmsg *m, int id, Amsg **ao)
 	}
 	if(d.length != ~0){
 		nulldir = 0;
-		if(d.length < 0)
+		if(d.length < 0 || (de->mode & DMDIR) != 0)
 			error(Ewstatl);
 		if(d.length != de->length){
 			if(d.length < de->length){
@@ -1701,6 +1685,8 @@ fswstat(Fmsg *m, int id, Amsg **ao)
 			p += 4;
 		}
 	}
+	if(*d.muid != '\0')
+		error(Eperm);
 	if(nulldir && rename == 0){
 		*ao = emalloc(sizeof(Amsg), 1);
 		(*ao)->op = AOsync;
@@ -1839,13 +1825,20 @@ fscreate(Fmsg *m)
 	if(walk1(agetp(&f->mnt->root), f->qpath, m->name, &old, &oldlen) == 0)
 		error(Eexist);
 	rlock(de);
-	if(fsaccess(f, de->mode, de->uid, de->gid, DMWRITE) == -1){
+	if(waserror()){
 		runlock(de);
-		error(Eperm);
+		nexterror();
 	}
+	if(fs->nextqid >= Qdump)
+		error(Enoqid);
+	if((de->mode & DMDIR) == 0)
+		error(Ecdir);
+	if(fsaccess(f, de->mode, de->uid, de->gid, DMWRITE) == -1)
+		error(Eperm);
 	duid = de->uid;
 	dgid = de->gid;
 	dmode = de->mode;
+	poperror();
 	runlock(de);
 
 	nm = 0;
@@ -2071,9 +2064,14 @@ fsopen(Fmsg *m, int id, Amsg **ao)
 		error(Ephase);
 	if((f->dent->qid.type & QTEXCL) && agetl(&f->dent->ref) != 1)
 		error(Elocked);
-	if(m->mode & ORCLOSE)
+	if((f->dent->qid.type & QTDIR) && (mbits & 0222) != 0)
+		error(Eperm);
+	if(m->mode & ORCLOSE){
+		if(fsaccess(f, f->dmode, f->duid, f->dgid, DMWRITE) == -1)
+			error(Eperm);
 		if((e = candelete(f)) != nil)
 			error(e);
+	}
 	if(fsaccess(f, d.mode, d.uid, d.gid, mbits) == -1)
 		error(Eperm);
 	f->dent->length = d.length;
@@ -2336,6 +2334,8 @@ fsread(Fmsg *m)
 
 	if((f = getfid(m->conn, m->fid)) == nil)
 		error(Enofid);
+	if(f->dent->gone)
+		error(Ephase);
 	r.type = Rread;
 	r.count = 0;
 	r.data = nil;
@@ -2403,6 +2403,8 @@ fswrite(Fmsg *m, int id)
 	p = m->data;
 	o = m->offset;
 	c = m->count;
+	if(o < 0 || o >= (1ULL<<63) - c)
+		error(Ewstatl);
 	if(f->dent->mode & DMAPPEND)
 		o = f->dent->length;
 	t = agetp(&f->mnt->root);
@@ -3056,15 +3058,7 @@ snapmsg(char *old, char *new)
 		a->delete = 1;
 	else
 		strecpy(a->new, a->new+sizeof(a->new), new);
-	/*
-	 * We're within an epoch, which means we need to guarantee
-	 * forward progress; snapshots are non-critical enough that
-	 * skipping one is the best option.
-	 */
-	if(!chsendnb(fs->admchan, a, 0)){
-		fprint(2, "skipping snapshot %s => %s (file system too busy)\n", a->old, (a->new != nil) ? a->new : "(delete)");
-		free(a);
-	}
+	chsend(fs->admchan, a);
 }
 
 static void
@@ -3077,11 +3071,11 @@ cronsync(char *name, Cron *c, Tm *tm, vlong now)
 	if(now/c->div == c->last/c->div)
 		return;
 
-	if(c->lbl[c->i][0] != 0)
+	if(c->cnt > 0 && c->lbl[c->i][0] != 0)
 		snapmsg(c->lbl[c->i], nil);
 	p = c->lbl[c->i];
 	e = p + sizeof(c->lbl[c->i]);
-	c->i = (c->i+1)%c->cnt;
+	c->i = (c->cnt > 0) ? (c->i+1) % c->cnt : 0;
 	seprint(p, e, "%s@%s.%τ",
 		name, c->tag,
 		tmfmt(tm, Tmfmt));
