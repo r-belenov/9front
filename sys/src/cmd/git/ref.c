@@ -74,7 +74,7 @@ peek(Eval *ev)
 int
 isword(char e)
 {
-	return isalnum(e) || e == '/' || e == '-' || e == '_' || e == '.';
+	return isalnum(e) || e == '/' || e == '-' || e == '_' || e == '.' || e == '@' || e == ':';
 }
 
 int
