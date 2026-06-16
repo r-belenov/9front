@@ -694,10 +694,25 @@ Bad:			memset(mnt->cron, 0, sizeof(mnt->cron));
 		loadhist(mnt, &mnt->cron[i]);
 }
 
+/* caller must hold mountlk */
+static Mount*
+mountlookup(char *name)
+{
+	Mount *mnt;
+
+	for(mnt = agetp(&fs->mounts); mnt != nil; mnt = mnt->next){
+		if(strcmp(name, mnt->name) == 0){
+			aincl(&mnt->ref, 1);
+			return mnt;
+		}
+	}
+	return nil;
+}
+
 Mount*
 getmount(char *name)
 {
-	Mount *mnt, *hd;
+	Mount *mnt, *p;
 	Tree *t;
 	int flg;
 
@@ -707,32 +722,42 @@ getmount(char *name)
 	}
 
 	qlock(&fs->mountlk);
-	hd = agetp(&fs->mounts);
-	for(mnt = hd; mnt != nil; mnt = mnt->next){
-		if(strcmp(name, mnt->name) == 0){
-			aincl(&mnt->ref, 1);
-			qunlock(&fs->mountlk);
-			return mnt;
-		}
-	}
+	mnt = mountlookup(name);
+	qunlock(&fs->mountlk);
+	if(mnt != nil)
+		return mnt;
+
+	/*
+	 * tricky -- we can't hold the mountlk
+	 * across opensnap, since we may end up
+	 * blocking on new blocks while in an
+	 * epoch, so we need to load the snap,
+	 * and see if we lost the race.
+	 */
+	if((t = opensnap(name, &flg)) == nil)
+		error(Enosnap);
 	if(waserror()){
-		qunlock(&fs->mountlk);
-		free(mnt);
+		closesnap(t);
 		nexterror();
 	}
 	mnt = emalloc(sizeof(*mnt), 1);
 	aswapl(&mnt->ref, 1);
 	snprint(mnt->name, sizeof(mnt->name), "%s", name);
-	if((t = opensnap(name, &flg)) == nil)
-		error(Enosnap);
 	mnt->flag = flg;
 	aswapp(&mnt->root, t);
-	mnt->next = hd;
 	loadautos(mnt);
+	poperror();
 
+	qlock(&fs->mountlk);
+	if((p = mountlookup(name)) != nil){
+		qunlock(&fs->mountlk);
+		closesnap(t);
+		free(mnt);
+		return p;
+	}
+	mnt->next = agetp(&fs->mounts);
 	aswapp(&fs->mounts, mnt);
 	qunlock(&fs->mountlk);
-	poperror();
 	return mnt;
 }
 
@@ -1877,8 +1902,7 @@ fscreate(Fmsg *m)
 
 	if(m->perm & DMDIR){
 		mb[nm].op = Oinsert;
-		if((p = packsuper(upkbuf, sizeof(upkbuf), d.qid.path)) == nil)
-			sysfatal("ream: pack super");
+		p = packsuper(upkbuf, sizeof(upkbuf), d.qid.path);
 		mb[nm].k = upkbuf;
 		mb[nm].nk = p - upkbuf;
 		p = packdkey(upvbuf, sizeof(upvbuf), f->qpath, d.name);
@@ -2842,10 +2866,9 @@ runsweep(int id, void*)
 			if(!agetl(&fs->rdonly)){
 				aincl(&fs->rdonly, 1);
 				/* cycle through all epochs to clear them.  */
-				for(i = 0; i < 4; i++){
-					epochwait();
-					epochclean();
-				}
+				for(i = 0; i < 3; i++)
+					while(!epochclean())
+						sleep(1);
 				if(waserror()){
 					fprint(2, "halt failed: %s\n", errmsg());
 					break;
@@ -2949,7 +2972,9 @@ Syncout:
 			sync(id);	/* t leaked on error() */
 
 			if(t != nil){
-				epochwait();
+				for(i = 0; i < 3; i++)
+					while(!epochclean())
+						sleep(1);
 				sweeptree(t);	/* t leaked on error() */
 				closesnap(t);
 			}

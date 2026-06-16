@@ -60,8 +60,7 @@ void	syncblk(Blk*);
 void	enqueue(Blk*);
 void	epochstart(int);
 void	epochend(int);
-void	epochwait(void);
-void	epochclean(void);
+int	epochclean(void);
 void	limbo(int op, Limbo*);
 void	freeblk(Tree*, Blk*);
 void	freebp(Tree*, Bptr);
@@ -79,7 +78,7 @@ void	clunkmount(Mount*);
 Tree*	updatesnap(Tree*, char*, int);
 void	tagsnap(Tree*, char*, int);
 void	delsnap(Tree*, vlong, char*);
-void	freedl(Dlist*, int);
+void	freedl(Dlist*);
 Tree*	opensnap(char*, int*);
 
 void	closesnap(Tree*);

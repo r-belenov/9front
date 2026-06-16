@@ -877,55 +877,42 @@ epochend(int tid)
 	aswapl(&fs->lepoch[tid], le &~ Eactive);
 }
 
-void
-epochwait(void)
-{
-	int i, delay;
-	ulong e, ge;
-
-	delay = 0;
-Again:
-	ge = agetl(&fs->epoch);
-	for(i = 0; i < agetl(&fs->nworker); i++){
-		e = agetl(&fs->lepoch[i]);
-		if((e & Eactive) && e != (ge | Eactive)){
-			if(delay == 300)
-				fprint(2, "stalled epoch %lx [worker %d]\n", e, i);
-			sleep(delay++);
-			goto Again;
-		}
-	}
-}
-
-void
+int
 epochclean(void)
 {
 	ulong c, e, ge;
+	int i, delay;
 	Limbo *p, *n;
 	Dlist *dl;
 	Blk *b;
 	Bfree *f;
 	Arena *a;
 	Qent qe;
-	int i;
 
+	delay = 0;
+Again:
 	c = agetl(&fs->nlimbo);
 	ge = agetl(&fs->epoch);
 	for(i = 0; i < agetl(&fs->nworker); i++){
 		e = agetl(&fs->lepoch[i]);
 		if((e & Eactive) && e != (ge | Eactive)){
 			if(c < fs->cmax/4)
-				return;
-			epochwait();
+				return 0;
+			if(delay == 300)
+				fprint(2, "stalled epoch %lx [worker %d]\n", e, i);
+			sleep(delay++);
+			goto Again;
 		}
 	}
-	epochwait();
 	p = aswapp(&fs->limbo[(ge+1)%3], nil);
 	aswapl(&fs->epoch, (ge+1)%3);
 
 	for(; p != nil; p = n){
 		n = p->next;
 		switch(p->op){
+		case DFclose:
+			closesnap((Tree*)p);
+			break;
 		case DFtree:
 			free(p);
 			break;
@@ -961,7 +948,7 @@ epochclean(void)
 			break;
 		case DFdlist:
 			dl = (Dlist*)p;
-			freedl(dl, 1);
+			freedl(dl);
 			free(dl);
 			break;
 		default:
@@ -969,6 +956,7 @@ epochclean(void)
 		}
 		aincl(&fs->nlimbo, -1);
 	}
+	return 1;
 }
 
 void
