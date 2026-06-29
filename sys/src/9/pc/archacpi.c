@@ -195,7 +195,7 @@ findtable(char sig[4])
 }
 
 static Apic*
-findapic(int gsi, int *pintin)
+findioapic(int gsi, int *pintin)
 {
 	Apic *a;
 
@@ -208,7 +208,7 @@ findapic(int gsi, int *pintin)
 			return a;
 		}
 	}
-	print("findapic: no ioapic found for gsi %d\n", gsi);
+	print("findioapic: no ioapic found for gsi %d\n", gsi);
 	return nil;
 }
 
@@ -218,10 +218,9 @@ addirq(int gsi, int type, int busno, int irq, int flags)
 	Apic *a;
 	Bus *bus;
 	Aintr *ai;
-	PCMPintr *pi;
 	int intin;
 
-	if((a = findapic(gsi, &intin)) == nil)
+	if((a = findioapic(gsi, &intin)) == nil)
 		return;
 
 	for(bus = mpbus; bus; bus = bus->next)
@@ -245,22 +244,17 @@ addirq(int gsi, int type, int busno, int irq, int flags)
 
 Foundbus:
 	for(ai = bus->aintr; ai; ai = ai->next)
-		if(ai->intr->irq == irq)
+		if(ai->irq == irq)
 			return;
 
-	if((pi = xalloc(sizeof(PCMPintr))) == nil)
-		panic("addirq: no memory for PCMPintr");
-	pi->type = PcmpIOINTR;
-	pi->intr = PcmpINT;
-	pi->flags = flags & (PcmpPOMASK|PcmpELMASK);
-	pi->busno = busno;
-	pi->irq = irq;
-	pi->apicno = a->apicno;
-	pi->intin = intin;
 
 	if((ai = xalloc(sizeof(Aintr))) == nil)
 		panic("addirq: no memory for Aintr");
-	ai->intr = pi;
+	ai->type = PcmpINT;
+	ai->flags = flags & (PcmpPOMASK|PcmpELMASK);
+	ai->irq = irq;
+	ai->gsi = gsi;
+	ai->intin = intin;
 	ai->apic = a;
 	ai->next = bus->aintr;
 	ai->bus = bus;
