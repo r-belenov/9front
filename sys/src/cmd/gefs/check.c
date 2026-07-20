@@ -146,21 +146,28 @@ checktree(int fd, Blk *b, int h, Kvp *lo, Kvp *hi)
 }
 
 static int
-checklog(int fd, Bptr hd)
+checklog(int fd, Bptr hd, Bptr tl)
 {
-	Bptr bp, nb;
+	Bptr pb, bp, nb;
 	Blk *b;
-
-	bp = (Bptr){-1, -1, -1};
+	
+	pb = Zb;
 	for(bp = hd; bp.addr != -1; bp = nb){
 		if(waserror()){
 			fprint(fd, "error loading %B\n", bp);
 			return 0;
 		}
+		pb = bp;
 		b = getblk(bp, 0);
 		nb = b->logp;
 		dropblk(b);
 		poperror();
+		if(bp.addr == tl.addr)
+			break;
+	}
+	if(tl.addr != -1 && pb.addr != tl.addr){
+		fprint(fd, "truncated chain %B\n", hd);
+		return 0;
 	}
 	return 1;
 }
@@ -170,29 +177,31 @@ checkfree(int fd)
 {
 	Arena *a;
 	Arange *r, *n;
-	int i, fail;
+	int i, ok;
 
-	fail = 0;
+	ok = 1;
 	for(i = 0; i < fs->narena; i++){
 		a = &fs->arenas[i];
 		qlock(a);
 		r = (Arange*)avlmin(a->free);
 		for(n = (Arange*)avlnext(r); n != nil; n = (Arange*)avlnext(n)){
 			if(r->off >= n->off){
-				fprint(2, "misordered length %llx >= %llx\n", r->off, n->off);
-				fail++;
+				fprint(fd, "misordered length %llx >= %llx\n", r->off, n->off);
+				ok = 0;
 			}
 			if(r->off+r->len >= n->off){
-				fprint(2, "overlaping range %llx+%llx >= %llx\n", r->off, r->len, n->off);
-				fail++;
+				fprint(fd, "overlaping range %llx+%llx >= %llx\n", r->off, r->len, n->off);
+				ok = 0;
 			}
 			r = n;
 		}
-		if(!checklog(fd, a->loghd))
+		if(!checklog(fd, a->loghd, Zb)){
 			fprint(fd, "arena %d: broken freelist\n", i);
+			ok = 0;
+		}
 		qunlock(a);
 	}
-	return fail;
+	return ok;
 }
 
 static int
@@ -201,8 +210,13 @@ checkdlist(int fd)
 	char pfx[1];
 	Dlist dl;
 	Scan s;
+	int ok;
 
-	checklog(fd, fs->snapdl.hd);
+	ok = 1;
+	if(!checklog(fd, fs->snapdl.hd, fs->snapdl.tl)){
+		fprint(fd, "bad snap dlist (%B, %B): %s\n", fs->snapdl.hd, fs->snapdl.tl, errmsg());
+		ok = 0;
+	}
 	pfx[0] = Kdlist;
 	btnewscan(&s, pfx, 1);
 	btenter(&fs->snap, &s);
@@ -210,22 +224,24 @@ checkdlist(int fd)
 		if(!btnext(&s, &s.kv))
 			break;
 		kv2dlist(&s.kv, &dl);
-		if(!checklog(fd, dl.hd))
+		if(!checklog(fd, dl.hd, dl.tl)){
 			fprint(fd, "bad dlist %P: %s\n", &s.kv, errmsg());
+			ok = 0;
+		}
 	}
 	btexit(&s);
-	return 0;
+	return ok;
 }
 
 static int
-checkdata(int, Tree *t)
+checkdata(int fd, Tree *t)
 {
 	char pfx[1];
 	Bptr bp;
 	Scan s;
 	Blk *b;
 
-	pfx[0] = Klabel;
+	pfx[0] = Kdat;
 	btnewscan(&s, pfx, 1);
 	btenter(t, &s);
 	while(1){
@@ -237,7 +253,7 @@ checkdata(int, Tree *t)
 		}
 		bp = unpackbp(s.kv.v, s.kv.nv);
 		if(isfree(bp.addr)){
-			fprint(2, "free block in use: %B\n", bp);
+			fprint(fd, "free block in use: %B\n", bp);
 			error("free block in use");
 		}
 		b = getblk(bp, GBraw);
@@ -248,26 +264,73 @@ checkdata(int, Tree *t)
 	return 0;
 }
 
+static vlong
+countlbl(int fd, vlong id)
+{
+	char pfx[1];
+	int nref;
+	Scan s;
+
+	nref = 0;
+	pfx[0] = Klabel;
+	btnewscan(&s, pfx, 1);
+	btenter(&fs->snap, &s);
+	while(1){
+		if(!btnext(&s, &s.kv))
+			break;
+		if(s.kv.nv >= 9 && UNPACK64(s.kv.v+1) == id){
+			fprint(fd, "\tlabel %.*s => %lld\n", (int)(s.kv.nk-1), s.kv.k+1, UNPACK64(s.kv.v+1));
+			nref++;
+		}
+	}
+	btexit(&s);
+	return nref;
+}
+
+static vlong
+countref(vlong id)
+{
+	char pfx[1];
+	Tree t;
+	int nref;
+	Scan s;
+
+	nref = 0;
+	pfx[0] = Ksnap;
+	btnewscan(&s, pfx, 1);
+	btenter(&fs->snap, &s);
+	while(1){
+		if(!btnext(&s, &s.kv))
+			break;
+		unpacktree(&t, s.kv.v, s.kv.nv);
+		if(t.pred == -1 && t.base == id)
+			nref++;
+	}
+	btexit(&s);
+	return nref;
+}
+
 int
 checkfs(int fd)
 {
-	int ok, height;
-	char pfx[1], name[Keymax+1];
+	int ok, height, nref, nlbl;
+	char pfx[1];
+	vlong gen;
 	Tree *t;
 	Scan s;
 	Blk *b;
 
 	ok = 1;
-	qlock(&fs->mutlk);
+	assert(!canqlock(&fs->mutlk));
 	if(waserror()){
 		fprint(fd, "error checking %s\n", errmsg());
 		return 0;
 	}
 	fprint(fd, "checking freelist\n");
-	if(checkfree(fd))
+	if(!checkfree(fd))
 		ok = 0;
 	fprint(fd, "checking deadlist\n");
-	if(checkdlist(fd))
+	if(!checkdlist(fd))
 		ok = 0;
 	fprint(fd, "checking snap tree: %B\n", fs->snap.bp);
 	if((b = getroot(&fs->snap, &height)) != nil){
@@ -275,7 +338,7 @@ checkfs(int fd)
 			ok = 0;
 		dropblk(b);
 	}
-	pfx[0] = Klabel;
+	pfx[0] = Ksnap;
 	btnewscan(&s, pfx, 1);
 	btenter(&fs->snap, &s);
 	while(1){
@@ -283,21 +346,28 @@ checkfs(int fd)
 			break;
 		if(waserror()){
 			fprint(fd, "moving on: %s\n", errmsg());
+			ok = 0;
 			continue;
 		}
-		memcpy(name, s.kv.k+1, s.kv.nk-1);
-		name[s.kv.nk-1] = 0;
-		if((t = opensnap(name, nil)) == nil){
-			fprint(2, "invalid snap label %s\n", name);
+		gen = UNPACK64(s.kv.k+1);
+		if((t = opentree(gen)) == nil){
+			fprint(fd, "invalid snap id %lld\n", gen);
 			ok = 0;
 			poperror();
-			break;
+			continue;
 		}
+		fprint(fd, "checking snap %lld: %B\n", gen, t->bp);
 		if(waserror()){
 			closesnap(t);
 			nexterror();
 		}
-		fprint(fd, "checking snap %s: %B\n", name, t->bp);
+		nref = countref(gen);
+		nlbl = countlbl(fd, gen);
+		fprint(fd, "\tnref %d nlbl %d\n", nref, nlbl);
+		if(t->nref < nref || t->nlbl < nlbl){
+			fprint(fd, "mismatched refs: (%d, %d) != (%d, %d)\n", t->nref, nref, t->nlbl, nlbl);
+			ok = 0;
+		}
 		b = getroot(t, &height);
 		if(waserror()){
 			dropblk(b);
@@ -314,7 +384,10 @@ checkfs(int fd)
 		poperror();
 	}
 	btexit(&s);
-	qunlock(&fs->mutlk);
 	poperror();
+	if(ok)
+		fprint(fd, "ok\n");
+	else
+		fprint(fd, "not ok\n");
 	return ok;
 }

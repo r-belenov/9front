@@ -36,7 +36,6 @@ extern ulong	fuzzseed;
 			   (p)[4]=(v)>>24;(p)[5]=(v)>>16;(p)[6]=(v)>>8;(p)[7]=(v);}while(0)
 
 void*	emalloc(usize, int);
-
 Blk*	newdblk(Tree*, vlong, int);
 Blk*	newblk(Tree*, int);
 Blk*	dupblk(Tree*, Blk*);
@@ -77,8 +76,9 @@ void	clunkmount(Mount*);
 
 Tree*	updatesnap(Tree*, char*, int);
 void	tagsnap(Tree*, char*, int);
-void	delsnap(Tree*, vlong, char*);
+int	delsnap(Tree*, vlong, char*);
 void	freedl(Dlist*);
+Tree*	opentree(vlong);
 Tree*	opensnap(char*, int*);
 
 void	closesnap(Tree*);
@@ -98,9 +98,13 @@ Conn*	newconn(int, int, int);
 void	putconn(Conn*);
 
 int	walk1(Tree*, vlong, char*, Qid*, vlong*);
-void	loadusers(int, Tree*);
+void	loadusers(Tree*);
 User*	uid2user(int);
 User*	name2user(char*);
+
+void	respond(Fmsg*, Fcall*);
+void	writectl(Fmsg*, Fid*);
+void	readstatus(Fmsg*, Fid*, Fcall*);
 
 void	btupsert(Tree*, Msg*, int);
 int	btlookup(Tree*, Key*, Kvp*, char*, int);
@@ -189,6 +193,7 @@ char*	unpackdkey(char*, int, vlong*);
 Tree*	unpacktree(Tree*, char*, int);
 char*	unpacksb(Gefs*, char*, int);
 char*	unpackstr(char*, char*, char**);
+void	fillxdir(Xdir*, vlong, char*, int, int, vlong);
 
 /* fmt */
 int	Bconv(Fmt*);
