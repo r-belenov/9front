@@ -441,8 +441,8 @@ main(int argc, char **argv)
 		reamfs(dev);
 		exits(nil);
 	}
+	loadfs(dev);
 	if(grow){
-		loadfs(dev);
 		growfs(dev);
 		exits(nil);
 	}
@@ -453,9 +453,7 @@ main(int argc, char **argv)
 		qunlock(&fs->mutlk);
 		exits(nil);
 	}
-
 	rfork(RFNOTEG);
-	loadfs(dev);
 	fs->wrchan = mkchan(32);
 	fs->admchan = mkchan(32);
 	/*
