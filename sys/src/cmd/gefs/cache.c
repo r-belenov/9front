@@ -31,7 +31,6 @@ lrutop(Blk *b)
 	 * to put this into the LRU, because
 	 * its now in use.
 	 */
-	bassert(b, b->magic == Magic);
 	bassert(b, checkflag(b, 0, Bstatic));
 	if(agetl(&b->ref) != 0){
 		qunlock(&fs->lrulk);
@@ -78,29 +77,23 @@ lrubot(Blk *b)
 void
 cacheins(Blk *b)
 {
-	Bucket *bkt;
 	u32int h;
 
 	bassert(b, b->magic == Magic);
-	h = ihash(b->bp.addr);
-	bkt = &fs->bcache[h % fs->cmax];
+	h = ihash(b->bp.addr) % fs->cmax;
 	qlock(&fs->lrulk);
 	traceb("cache", b->bp);
 	bassert(b, checkflag(b, 0, Bstatic|Bcached));
 	setflag(b, Bcached, 0);
-	bassert(b, b->hnext == nil);
-	for(Blk *bb = bkt->b; bb != nil; bb = bb->hnext)
-		bassert(b, b != bb && b->bp.addr != bb->bp.addr);
 	b->cached = getcallerpc(&b);
-	b->hnext = bkt->b;
-	bkt->b = b;
+	b->hnext = fs->bcache[h];
+	fs->bcache[h] = b;
 	qunlock(&fs->lrulk);
 }
 
 static void
 cachedel_lk(vlong addr)
 {
-	Bucket *bkt;
 	Blk *b, **p;
 	u32int h;
 
@@ -109,15 +102,12 @@ cachedel_lk(vlong addr)
 
 	Bptr bp = {addr, -1, -1};
 	tracex("uncache", bp, -1, getcallerpc(&addr));
-	h = ihash(addr);
-	bkt = &fs->bcache[h % fs->cmax];
-	p = &bkt->b;
-	for(b = bkt->b; b != nil; b = b->hnext){
+	h = ihash(addr) % fs->cmax;
+	p = &fs->bcache[h];
+	for(b = *p; b != nil; b = b->hnext){
 		if(b->bp.addr == addr){
-			/* FIXME: Until we clean up snap.c, we can have dirty blocks in cache */
-			bassert(b, checkflag(b, Bcached, Bstatic)); //Bdirty));
+			bassert(b, checkflag(b, Bcached, Bstatic|Bdirty));
 			*p = b->hnext;
-			b->uncached = getcallerpc(&addr);
 			b->hnext = nil;
 			setflag(b, 0, Bcached);
 			break;
@@ -138,18 +128,15 @@ cachedel(vlong addr)
 Blk*
 cacheget(vlong addr)
 {
-	Bucket *bkt;
 	u32int h;
 	Blk *b;
 
-	h = ihash(addr);
-	bkt = &fs->bcache[h % fs->cmax];
+	h = ihash(addr) % fs->cmax;
 	qlock(&fs->lrulk);
-	for(b = bkt->b; b != nil; b = b->hnext){
+	for(b = fs->bcache[h]; b != nil; b = b->hnext){
 		if(b->bp.addr == addr){
 			holdblk(b);
 			lrudel(b);
-			b->lasthold = getcallerpc(&addr);
 			break;
 		}
 	}
@@ -175,13 +162,8 @@ cachepluck(void)
 	bassert(b, agetl(&b->ref) == 0);
 	if(checkflag(b, Bcached, 0))
 		cachedel_lk(b->bp.addr);
-	if(checkflag(b, Bcached, 0))
-		fprint(2, "%B cached %#p freed %#p\n", b->bp, b->cached, b->freed);
-	bassert(b, checkflag(b, 0, Bcached));
 	lrudel(b);
 	aswapl(&b->flag, 0);
-	b->lasthold = 0;
-	b->lastdrop = 0;
 	b->freed = 0;
 	b->hnext = nil;
 	qunlock(&fs->lrulk);
