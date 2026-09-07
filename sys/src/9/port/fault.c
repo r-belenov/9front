@@ -452,8 +452,8 @@ vmemchr(void *s, int c, ulong n)
 Segment*
 seg(Proc *p, uintptr addr, int dolock)
 {
-	Segment *s;
 	int i;
+	Segment *s;
 
 	for(i = 0; i < NSEG; i++) {
 		if((s = p->seg[i]) == nil)
@@ -489,7 +489,7 @@ checkpages(void)
 		if((s = up->seg[i]) == nil)
 			continue;
 		qlock(s);
-		if(s->mapsize > 0){
+		if(s->mapsize > 0 && !up->newtlb){
 			for(addr=s->base; addr<s->top; addr+=BY2PG){
 				p = segpeek(s, addr);
 				if(!pagedout(p))
