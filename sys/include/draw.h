@@ -210,7 +210,6 @@ struct Display
 	Subfont		*defaultsubfont;
 	Image		*windows;
 	Image		*screenimage;
-	int		_isnewdisplay;
 };
 
 struct Image
@@ -348,6 +347,7 @@ extern int	drawcmd(Display*, char*, ...);
 extern int	bytesperline(Rectangle, int);
 extern void	closedisplay(Display*);
 extern void	drawerror(Display*, char*);
+extern int	_flushimage(Display*);
 extern int	flushimage(Display*, int);
 extern int	freeimage(Image*);
 extern int	_freeimage1(Image*);
