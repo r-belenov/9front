@@ -93,7 +93,7 @@ if not if(test -d /cfg/default/service)
 if not
 	serviced=/rc/bin/service
 if(~ $#auth 0)
-	auth=`{ndb/query -cia sys $sysname auth}
+	auth=`{ndb/query -a sys $sysname auth}
 if(@{
 	for(a in $sysname `{ndb/query -cia sys $sysname ip} `{ndb/query -cia sys $sysname dom}){
 		if(~ $a $auth)
