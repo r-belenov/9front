@@ -82,8 +82,8 @@ if(! ps|grep -s timesync){
 		ntp=`{ndb/query -cia sys $sysname ntp}
 	if(~ $#ntp 0)
 		ntp=pool.ntp.org
-	aux/timesync -n $ntp
-	sleep 2
+#	aux/timesync -n $ntp
+#	sleep 2
 }
 
 if(test -d /cfg/$sysname/service)
