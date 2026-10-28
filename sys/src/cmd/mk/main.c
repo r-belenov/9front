@@ -10,6 +10,7 @@ int iflag = 0;
 int kflag = 0;
 int aflag = 0;
 int uflag = 0;
+int pflag = 0;
 int nreps = 1;
 char *explain = 0;
 Word *target1;
@@ -77,6 +78,9 @@ main(int argc, char **argv)
 			break;
 		case 'n':
 			nflag = 1;
+			break;
+		case 'p':
+			pflag = 1;
 			break;
 		case 's':
 			sflag = 1;

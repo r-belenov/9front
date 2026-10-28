@@ -231,6 +231,8 @@ outofdate(Node *node, Arc *arc, int eval)
 		 * Treat equal times as out-of-date.
 		 * It's a race, and the safer option is to do
 		 * extra building rather than not enough.
+		 * 
+		 * pflag enables POSIX semantics, treating equal times as up-to-date
 	 	 */
-		return node->time <= arc->n->time;
+		return pflag ? node->time < arc->n->time : node->time <= arc->n->time;
 }
