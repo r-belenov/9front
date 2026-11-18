@@ -131,7 +131,7 @@ typedef struct Job
 extern Job *jobs;
 
 extern	int	debug;
-extern	int	nflag, tflag, iflag, kflag, aflag, mflag;
+extern	int	nflag, tflag, iflag, kflag, aflag, mflag, pflag;
 extern	int	mkinline;
 extern	char	*mkinfile;
 extern	int	nreps;

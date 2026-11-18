@@ -156,40 +156,48 @@ renderline(Image *b, Rectangle r, int pad, int lt, char *ls)
 	Rectangle trlr;
 	Rune  rn;
 	char *s;
-	int off, tab, nc;
+	int off, tab, nc, hastrl;
 
 	draw(b, r, cols[lt].bg, nil, ZP);
 	p = Pt(r.min.x + pad + Hpadding, r.min.y + (Dy(r)-font->height)/2);
 	off = Δpan / spacew;
-	trlr = Rpt(p, addpt(p, Pt(0, font->height)));
+	hastrl = 0;
 	for(s = ls, nc = -1, tab = 0; *s || tab > 0; nc++, tab--, off--){
 		if(tab <= 0 && *s && *s == '\t'){
 			tab = 4 - nc % 4;
 			s++;
 		}
-		p0 = p;
 		if(tab > 0){
+			p0 = p;
 			if(off <= 0)
 				p = runestring(b, p, cols[lt].bg, ZP, font, L"█");
-			if(trlr.min.x == trlr.max.x)
-				trlr.min.x = p0.x;
-			trlr.max.x = p.x;
-		}else if(p.x+Hpadding+spacew+ellipsisw >= b->r.max.x-Hpadding){
+			if(hastrl)
+				trlr.max = addpt(p, Pt(0, font->height));
+			else{
+				trlr.min = p0;
+				hastrl = 1;
+			}
+		}else if((p.x+Hpadding+spacew+ellipsisw>=b->r.max.x)){
 			string(b, p, cols[lt].fg, ZP, font, ellipsis);
 			break;
 		}else{
 			s += chartorune(&rn, s);
+			p0 = p;
 			if(off <= 0)
 				p = runestringn(b, p, cols[lt].fg, ZP, font, &rn, 1);
-			if(nc >= 0 && isspacerune(rn)){
-				if(trlr.min.x == trlr.max.x)
-					trlr.min.x = p0.x;
-				trlr.max.x = p.x;
-			}else if(trlr.max.x != trlr.min.x)
-				trlr.min.x = trlr.max.x;
+			if(isspacerune(rn)){
+				if(hastrl)
+					trlr.max = addpt(p, Pt(0, font->height));
+				else{
+					trlr.min = p0;
+					hastrl = 1;
+				}
+			}else if(hastrl)
+				hastrl = 0;
 		}
 	}
-	if(trlr.max.x != trlr.min.x)
+
+	if(hastrl)
 		draw(b, trlr, trlcol, nil, ZP);
 }
 

@@ -82,6 +82,15 @@ $OBJ: $HFILES
 
 install:V: /$objtype/$p$CONF
 
+install.%:V:	$p$CONF $p$CONF.u
+	@{
+	rfork n
+	9fs $stem
+	test -e /n/$stem/$p$CONF && cp /n/$stem/$p$CONF /n/$stem/$p$CONF.o
+	test -e /n/$stem/$p$CONF.u && cp /n/$stem/$p$CONF.u /n/$stem/$p$CONF.uo
+	cp $p$CONF $p$CONF.u /n/$stem/
+	}
+
 /$objtype/$p$CONF:D: $p$CONF $p$CONF.u
 	cp -x $p$CONF $p$CONF.u /$objtype/
 

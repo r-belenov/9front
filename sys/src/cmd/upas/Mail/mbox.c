@@ -769,39 +769,6 @@ mbflush(char **, int)
 }
 
 static void
-mbmove(char **f, int nf)
-{
-	char *sel, *p, *e, *path;
-	int fd;
-	Mesg *m;
-
-	if(nf != 1){
-		fprint(2, "usage: Move folder\n");
-		return;
-	}
-	if((sel = winreadsel(&mbox)) == nil)
-		return;
-	path = estrjoin(maildir, "/ctl", nil);
-	if((fd = open(path, OWRITE)) != -1){
-		for(p = sel; p != nil; p = e){
-			if((e = strchr(p, '\n')) != nil)
-				*e++ = 0;
-			if(!matchmesg(&mbox, p))
-				continue;
-			if((m = mesglookup(p, nil)) == nil
-			|| (m->state & Sopen) || (m->flags & Fdel))
-				continue;
-			if(fprint(fd, "move %s %d %q", mailbox, atoi(m->name), f[0]) == -1)
-				fprint(2, "Move: %s: %r\n", m->name);
-		}
-		close(fd);
-	}else
-		fprint(2, "Move: open %s: %r\n", path);
-	free(path);
-	free(sel);
-}
-
-static void
 mbcompose(char **, int)
 {
 	compose("", nil, 0);
@@ -1013,7 +980,6 @@ Fn mboxfn[] = {
 	{"Next", nextunread},
 	{"Mark", mbmark},
 	{"Filter", filter},
-	{"Move", mbmove},
 #ifdef NOTYET
 	{"Get", mbrefresh},
 #endif
@@ -1039,10 +1005,8 @@ doevent(Event *ev)
 		break;
 	case 'x':
 	case 'X':
-		if((nf = tokenize(ev->text, f, nelem(f) - 1)) == 0)
+		if((nf = tokenize(ev->text, f, nelem(f))) == 0)
 			return;
-		if(ev->flags & 0x8)
-			f[nf++] = ev->arg;
 		for(p = mboxfn; p->fn != nil; p++)
 			if(strcmp(p->name, f[0]) == 0 && p->fn != nil){
 				p->fn(&f[1], nf - 1);

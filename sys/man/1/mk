@@ -84,6 +84,9 @@ Do as much work as possible in the face of errors.
 Print, but do not execute, the commands
 needed to update the targets.
 .TP
+.B -p
+Treat equal times for target and prerequisite as up to date.
+.TP
 .B -s
 Make the command line arguments sequentially rather than in parallel.
 .TP
